@@ -18,6 +18,7 @@ myenv/
 venv/
 env/
 ENV/
+.venv311/
 
 # IDE
 .vscode/
@@ -33,3 +34,4 @@ Thumbs.db
 arena_content/
 arena_vector_store/
 processed_files.json
+renee.pdf
