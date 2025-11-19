@@ -30,3 +30,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
+arena_content/
+arena_vector_store/
+processed_files.json
