@@ -70,20 +70,16 @@ async def extract_text_from_pdf(pdf_path: str) -> str:
         raise Exception(f"Failed to extract text from PDF: {e}") from e
 
 
-async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5) -> None:
+async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5) -> list:
     """
     Extract text from PDF, chunk it, and find the top 20 most similar chunks across all PDF chunks.
+    Returns a list of DocumentWithScore objects.
     """
-    print(f"\nProcessing PDF: {pdf_path}")
-    print("=" * 70)
-    
     # Extract text from PDF
-    print("Extracting text from PDF...")
     pdf_text = await extract_text_from_pdf(pdf_path)
     
     if not pdf_text or len(pdf_text.strip()) < 10:
-        print("Error: No text could be extracted from the PDF.", file=sys.stderr)
-        return
+        return []
     
     # Create a temporary document from the PDF text
     from beeai_framework.backend.types import Document
@@ -94,31 +90,24 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5
     )
     
     # Chunk the PDF document
-    print("Chunking PDF content...")
     text_splitter = TextSplitter.from_name(
         name="langchain:RecursiveCharacterTextSplitter", chunk_size=1000, chunk_overlap=200
     )
     pdf_chunks = await text_splitter.split_documents([pdf_document])
     
-    print(f"PDF split into {len(pdf_chunks)} chunks")
-    print("Searching for similar chunks...\n")
-    
     # Search for similar chunks for each PDF chunk and collect all results
     all_results = []
-    for i, pdf_chunk in enumerate(pdf_chunks, 1):
+    for pdf_chunk in pdf_chunks:
         try:
             # Search using the PDF chunk content as the query
             results = await vector_store.search(query=pdf_chunk.content, k=k)
-            
-            for result in results:
-                all_results.append(result)
+            all_results.extend(results)
         except Exception as e:
-            print(f"  Error searching for chunk {i}: {e}", file=sys.stderr)
+            print(f"  Error searching chunk: {e}", file=sys.stderr)
             continue
     
     if not all_results:
-        print("No similar chunks found.")
-        return
+        return []
     
     # Sort by similarity score (lower is better for distance-based scores)
     # and get top 20 unique chunks (by document content)
@@ -133,33 +122,7 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5
             if len(unique_results) >= 20:
                 break
     
-    # Display top 20 results
-    print("=" * 70)
-    print(f"TOP {len(unique_results)} MOST SIMILAR CHUNKS")
-    print("=" * 70)
-    print()
-    
-    for i, result in enumerate(unique_results, 1):
-        document = result.document
-        score = result.score
-        
-        # Get metadata
-        source = document.metadata.get("source", "Unknown")
-        filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-        
-        # Get content preview (first 300 chars)
-        content = document.content
-        content_preview = content[:300] + "..." if len(content) > 300 else content
-        
-        print(f"{i}. Similarity Score: {score:.4f}")
-        print(f"   File: {filename}")
-        if source != "Unknown":
-            print(f"   Path: {source}")
-        print(f"   Content:")
-        # Indent content for readability
-        for line in content_preview.split("\n"):
-            print(f"   {line}")
-        print()
+    return unique_results
 
 
 async def search(vector_store: VectorStore, query: str, k: int = 5) -> None:
@@ -256,7 +219,32 @@ Examples:
         if not os.path.exists(args.pdf):
             print(f"Error: PDF file not found: {args.pdf}", file=sys.stderr)
             sys.exit(1)
-        await search_pdf_chunks(vector_store, args.pdf, k=args.top_k)
+        print(f"\nProcessing file: {args.pdf}")
+        print("=" * 70)
+        results = await search_pdf_chunks(vector_store, args.pdf, k=args.top_k)
+        
+        if not results:
+            print("No similar chunks found.")
+        else:
+            print(f"TOP {len(results)} MOST SIMILAR CHUNKS")
+            print("=" * 70)
+            print()
+            
+            for i, result in enumerate(results, 1):
+                document = result.document
+                score = result.score
+                source = document.metadata.get("source", "Unknown")
+                filename = os.path.basename(source) if source != "Unknown" else "Unknown"
+                content_preview = document.content[:300] + "..." if len(document.content) > 300 else document.content
+                
+                print(f"{i}. Similarity Score: {score:.4f}")
+                print(f"   File: {filename}")
+                if source != "Unknown":
+                    print(f"   Path: {source}")
+                print(f"   Content:")
+                for line in content_preview.split("\n"):
+                    print(f"   {line}")
+                print()
     else:
         if not args.query:
             parser.error("Either provide a query string or use --pdf flag")

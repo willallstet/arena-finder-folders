@@ -1,56 +1,210 @@
 #!/usr/bin/env python3
 """
-Simple GUI for searching the arena vector store.
+Simple drag-and-drop GUI for searching the arena vector store.
 """
 
 import asyncio
-import io
 import os
 import sys
-from pathlib import Path
-
-try:
-    from pypdf import PdfReader
-except ImportError:
-    PdfReader = None  # type: ignore
+import webbrowser
 
 try:
     from PyQt6.QtWidgets import (
         QApplication,
         QMainWindow,
         QWidget,
-        QVBoxLayout,
-        QHBoxLayout,
-        QPushButton,
-        QLineEdit,
-        QTextEdit,
-        QLabel,
-        QFileDialog,
-        QMessageBox,
     )
     from PyQt6.QtCore import Qt, QThread, pyqtSignal
+    from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QFont
 except ImportError:
     print("Error: PyQt6 is required. Install with: pip install PyQt6", file=sys.stderr)
     sys.exit(1)
 
-from beeai_framework.backend.embedding import EmbeddingModel
-from beeai_framework.backend.text_splitter import TextSplitter
-from beeai_framework.backend.vector_store import VectorStore
+from arena_search import load_vector_store, search_pdf_chunks
 
-VECTOR_DB_PATH = "arena_vector_store"
+
+class DotCanvas(QWidget):
+    """Canvas widget that displays dots positioned by similarity score."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.dots = []  # List of (x, y, score, url, filename) tuples
+        self.setMinimumSize(800, 600)
+        
+        # Load logo
+        logo_path = "arena_Logo.png"
+        if os.path.exists(logo_path):
+            self.logo = QPixmap(logo_path)
+        else:
+            self.logo = None
+    
+    def set_dots(self, results: list):
+        """Set the dots to display from search results."""
+        self.dots = []
+        
+        if not results:
+            return
+        
+        # Extract block IDs and URLs from results
+        for result in results:
+            document = result.document
+            score = result.score
+            source = document.metadata.get("source", "Unknown")
+            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
+            
+            # Extract block ID from filename (part before underscore)
+            block_id = None
+            url = None
+            if filename != "Unknown" and "_" in filename:
+                block_id = filename.split("_")[0]
+                url = f"https://are.na/block/{block_id}"
+            
+            self.dots.append((score, url, filename))
+        
+        self.update()  # Trigger repaint
+    
+    def paintEvent(self, event):
+        """Draw the dots on the canvas."""
+        import math
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        
+        # Find min and max scores to normalize
+        if not self.dots:
+            # Still draw logo even if no dots
+            if self.logo and not self.logo.isNull():
+                logo_width = self.logo.width()
+                logo_height = self.logo.height()
+                logo_x = center_x - logo_width / 2
+                logo_y = center_y - logo_height / 2
+                painter.drawPixmap(int(logo_x), int(logo_y), self.logo)
+            return
+        
+        scores = [dot[0] for dot in self.dots]
+        min_score = min(scores)
+        max_score = max(scores)
+        score_range = max_score - min_score if max_score != min_score else 1
+        
+        # Calculate max radius, ensuring dots are at least 200 pixels from center
+        available_radius = min(center_x, center_y) * 0.8  # Leave some margin
+        min_distance = 200  # Minimum distance from center in pixels
+        max_radius = max(available_radius, min_distance)
+        
+        # Set font for score text
+        font = QFont()
+        font.setPointSize(9)
+        painter.setFont(font)
+        
+        # Draw dots and lines
+        for i, (score, url, filename) in enumerate(self.dots):
+            # Normalize score to 0-1 range (lower score = more similar = closer to center)
+            normalized = (score - min_score) / score_range
+            
+            # Calculate distance from center (0 = center, 1 = edge)
+            # Use a square root to make distribution more even
+            # Map to range [min_distance, max_radius]
+            distance_normalized = normalized ** 0.5
+            distance = min_distance + distance_normalized * (max_radius - min_distance)
+            
+            # Calculate angle (distribute evenly around circle)
+            angle = (i / len(self.dots)) * 2 * math.pi
+            
+            # Calculate position using polar coordinates
+            x = center_x + distance * math.cos(angle)
+            y = center_y + distance * math.sin(angle)
+            
+            # Draw line from center to dot
+            painter.setPen(QPen(QColor(0, 0, 0), 1))
+            painter.drawLine(int(center_x), int(center_y), int(x), int(y))
+            
+            # Calculate position for score text (midpoint of line)
+            text_x = (center_x + x) / 2
+            text_y = (center_y + y) / 2
+            
+            # Draw score text
+            score_text = f"{score:.3f}"
+            text_rect = painter.fontMetrics().boundingRect(score_text)
+            text_x -= text_rect.width() / 2
+            text_y -= text_rect.height() / 2
+            painter.setPen(QPen(QColor(0, 0, 0), 1))
+            painter.drawText(int(text_x), int(text_y), score_text)
+            
+            # Draw dot
+            painter.setPen(QPen(QColor(0, 0, 0), 2))
+            painter.setBrush(QColor(0, 0, 0))
+            dot_size = 8
+            painter.drawEllipse(int(x - dot_size/2), int(y - dot_size/2), dot_size, dot_size)
+        
+        # Draw logo at center (after dots so it's on top)
+        if self.logo and not self.logo.isNull():
+            logo_width = self.logo.width()
+            logo_height = self.logo.height()
+            logo_x = center_x - logo_width / 2
+            logo_y = center_y - logo_height / 2
+            painter.drawPixmap(int(logo_x), int(logo_y), self.logo)
+    
+    def mousePressEvent(self, event):
+        """Handle mouse click to check if a dot was clicked."""
+        import math
+        
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        
+        click_x = event.position().x()
+        click_y = event.position().y()
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        
+        # Find min and max scores
+        if not self.dots:
+            return
+        
+        scores = [dot[0] for dot in self.dots]
+        min_score = min(scores)
+        max_score = max(scores)
+        score_range = max_score - min_score if max_score != min_score else 1
+        
+        # Calculate max radius, ensuring dots are at least 200 pixels from center
+        available_radius = min(center_x, center_y) * 0.8
+        min_distance = 200
+        max_radius = max(available_radius, min_distance)
+        dot_radius = 8
+        
+        # Check each dot
+        for i, (score, url, filename) in enumerate(self.dots):
+            normalized = (score - min_score) / score_range
+            distance_normalized = normalized ** 0.5
+            distance = min_distance + distance_normalized * (max_radius - min_distance)
+            angle = (i / len(self.dots)) * 2 * math.pi
+            
+            x = center_x + distance * math.cos(angle)
+            y = center_y + distance * math.sin(angle)
+            
+            # Check if click is within dot radius
+            if abs(click_x - x) < dot_radius and abs(click_y - y) < dot_radius:
+                if url:
+                    webbrowser.open(url)
+                break
 
 
 class SearchWorker(QThread):
     """Worker thread for async search operations."""
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(list)
     error = pyqtSignal(str)
-    progress = pyqtSignal(str)
 
-    def __init__(self, vector_store: VectorStore, query: str = None, pdf_path: str = None, k: int = 5):
+    def __init__(self, vector_store, file_path: str, k: int = 5):
         super().__init__()
         self.vector_store = vector_store
-        self.query = query
-        self.pdf_path = pdf_path
+        self.file_path = file_path
         self.k = k
 
     def run(self):
@@ -58,117 +212,18 @@ class SearchWorker(QThread):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
-            if self.pdf_path:
-                result = loop.run_until_complete(self._search_pdf())
-            else:
-                result = loop.run_until_complete(self._search_query())
-            
-            self.finished.emit(result)
+            results = loop.run_until_complete(
+                search_pdf_chunks(self.vector_store, self.file_path, self.k)
+            )
+            self.finished.emit(results)
         except Exception as e:
             self.error.emit(str(e))
         finally:
             loop.close()
 
-    async def _search_query(self) -> str:
-        """Search with text query."""
-        results = await self.vector_store.search(query=self.query, k=self.k)
-        
-        if not results:
-            return "No results found."
-        
-        output = []
-        for i, result in enumerate(results, 1):
-            document = result.document
-            score = result.score
-            source = document.metadata.get("source", "Unknown")
-            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-            content_preview = document.content[:300] + "..." if len(document.content) > 300 else document.content
-            
-            output.append(f"{i}. Score: {score:.4f} | File: {filename}")
-            output.append(f"   {content_preview}")
-            output.append("")
-        
-        return "\n".join(output)
-
-    async def _search_pdf(self) -> str:
-        """Search with PDF file."""
-        self.progress.emit("Extracting text from PDF...")
-        
-        # Extract text from PDF
-        if PdfReader is None:
-            raise ImportError("pypdf is required. Install with: pip install pypdf")
-        
-        with open(self.pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-        
-        pdf_file = io.BytesIO(pdf_bytes)
-        pdf_reader = PdfReader(pdf_file)
-        
-        extracted_text = []
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                extracted_text.append(page_text)
-        
-        pdf_text = "\n\n".join(extracted_text)
-        
-        if not pdf_text or len(pdf_text.strip()) < 10:
-            return "Error: No text could be extracted from the PDF."
-        
-        # Create document and chunk it
-        self.progress.emit("Chunking PDF...")
-        from beeai_framework.backend.types import Document
-        
-        pdf_document = Document(
-            content=pdf_text,
-            metadata={"source": self.pdf_path, "type": "pdf"}
-        )
-        
-        text_splitter = TextSplitter.from_name(
-            name="langchain:RecursiveCharacterTextSplitter", chunk_size=1000, chunk_overlap=200
-        )
-        pdf_chunks = await text_splitter.split_documents([pdf_document])
-        
-        # Search for similar chunks
-        self.progress.emit(f"Searching {len(pdf_chunks)} PDF chunks...")
-        all_results = []
-        for pdf_chunk in pdf_chunks:
-            results = await self.vector_store.search(query=pdf_chunk.content, k=self.k)
-            all_results.extend(results)
-        
-        if not all_results:
-            return "No similar chunks found."
-        
-        # Get top 20 unique results
-        seen_docs = set()
-        unique_results = []
-        for result in sorted(all_results, key=lambda x: x.score):
-            doc_key = result.document.content[:100]
-            if doc_key not in seen_docs:
-                seen_docs.add(doc_key)
-                unique_results.append(result)
-                if len(unique_results) >= 20:
-                    break
-        
-        # Format output
-        output = [f"TOP {len(unique_results)} MOST SIMILAR CHUNKS\n"]
-        for i, result in enumerate(unique_results, 1):
-            document = result.document
-            score = result.score
-            source = document.metadata.get("source", "Unknown")
-            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-            content_preview = document.content[:300] + "..." if len(document.content) > 300 else document.content
-            
-            output.append(f"{i}. Score: {score:.4f} | File: {filename}")
-            output.append(f"   {content_preview}")
-            output.append("")
-        
-        return "\n".join(output)
-
 
 class ArenaSearchGUI(QMainWindow):
-    """Simple GUI for arena vector store search."""
+    """Simple drag-and-drop GUI for arena vector store search."""
     
     def __init__(self):
         super().__init__()
@@ -179,163 +234,71 @@ class ArenaSearchGUI(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle("Arena Vector Store Search")
-        self.setGeometry(100, 100, 800, 600)
+        self.setWindowTitle("Arena Search")
+        self.setGeometry(100, 100, 1200, 800)
         
-        # Central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # Set white background
+        self.setStyleSheet("background-color: white;")
         
-        # Main layout
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
+        # Create canvas widget
+        self.canvas = DotCanvas()
+        self.canvas.setStyleSheet("background-color: white;")
+        self.setCentralWidget(self.canvas)
         
-        # Title
-        title = QLabel("Arena Vector Store Search")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
-        layout.addWidget(title)
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+    
+    def dropEvent(self, event):
+        """Handle drop event."""
+        if self.vector_store is None:
+            return
         
-        # Query input section
-        query_layout = QHBoxLayout()
-        query_label = QLabel("Search Query:")
-        self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("Enter your search query...")
-        self.query_input.returnPressed.connect(self.search_query)
-        query_layout.addWidget(query_label)
-        query_layout.addWidget(self.query_input)
-        layout.addLayout(query_layout)
-        
-        # PDF section
-        pdf_layout = QHBoxLayout()
-        pdf_label = QLabel("PDF File:")
-        self.pdf_path_label = QLabel("No file selected")
-        self.pdf_path_label.setStyleSheet("color: gray;")
-        pdf_button = QPushButton("Browse...")
-        pdf_button.clicked.connect(self.select_pdf)
-        pdf_layout.addWidget(pdf_label)
-        pdf_layout.addWidget(self.pdf_path_label)
-        pdf_layout.addWidget(pdf_button)
-        layout.addLayout(pdf_layout)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.start_search)
-        self.search_button.setEnabled(False)
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.clicked.connect(self.clear_results)
-        button_layout.addWidget(self.search_button)
-        button_layout.addWidget(self.clear_button)
-        layout.addLayout(button_layout)
-        
-        # Status label
-        self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: gray; padding: 5px;")
-        layout.addWidget(self.status_label)
-        
-        # Results area
-        results_label = QLabel("Results:")
-        layout.addWidget(results_label)
-        self.results_text = QTextEdit()
-        self.results_text.setReadOnly(True)
-        layout.addWidget(self.results_text)
+        files = [url.toLocalFile() for url in event.mimeData().urls()]
+        if files and os.path.exists(files[0]):
+            self.process_file(files[0])
     
     def load_vector_store(self):
         """Load the vector store."""
-        if not os.path.exists(VECTOR_DB_PATH):
-            self.status_label.setText("Error: Vector store not found. Run arena_vector_store.py first.")
-            self.status_label.setStyleSheet("color: red; padding: 5px;")
-            return
-        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            embedding_model = EmbeddingModel.from_name("ollama:nomic-embed-text")
-            from beeai_framework.adapters.beeai.backend.vector_store import TemporalVectorStore
-            
-            self.vector_store = TemporalVectorStore.load(
-                path=VECTOR_DB_PATH, embedding_model=embedding_model
-            )
-            self.status_label.setText("Vector store loaded successfully.")
-            self.status_label.setStyleSheet("color: green; padding: 5px;")
-            self.search_button.setEnabled(True)
-        except Exception as e:
-            self.status_label.setText(f"Error loading vector store: {e}")
-            self.status_label.setStyleSheet("color: red; padding: 5px;")
+            self.vector_store = loop.run_until_complete(load_vector_store())
+        except Exception:
+            pass
+        finally:
+            loop.close()
     
-    def select_pdf(self):
-        """Open file dialog to select PDF."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select PDF File", "", "PDF Files (*.pdf)"
-        )
-        if file_path:
-            self.pdf_path_label.setText(os.path.basename(file_path))
-            self.pdf_path_label.setStyleSheet("color: black;")
-            self.pdf_path = file_path
-    
-    def search_query(self):
-        """Trigger search when Enter is pressed in query input."""
-        if self.query_input.text().strip():
-            self.start_search()
-    
-    def start_search(self):
-        """Start the search operation."""
+    def process_file(self, file_path: str):
+        """Process dropped file and search for similar chunks."""
         if self.worker and self.worker.isRunning():
             return
         
-        query = self.query_input.text().strip()
-        pdf_path = getattr(self, 'pdf_path', None)
+        # Clear previous results
+        self.canvas.set_dots([])
         
-        if not query and not pdf_path:
-            QMessageBox.warning(self, "No Input", "Please enter a search query or select a PDF file.")
-            return
-        
-        if pdf_path and not os.path.exists(pdf_path):
-            QMessageBox.warning(self, "File Not Found", f"PDF file not found: {pdf_path}")
-            return
-        
-        self.search_button.setEnabled(False)
-        self.status_label.setText("Searching...")
-        self.status_label.setStyleSheet("color: blue; padding: 5px;")
-        self.results_text.clear()
-        
+        # Start search
         self.worker = SearchWorker(
             vector_store=self.vector_store,
-            query=query if query else None,
-            pdf_path=pdf_path if pdf_path else None,
+            file_path=file_path,
             k=5
         )
         self.worker.finished.connect(self.on_search_finished)
         self.worker.error.connect(self.on_search_error)
-        self.worker.progress.connect(self.on_search_progress)
         self.worker.start()
     
-    def on_search_progress(self, message: str):
-        """Update status with progress message."""
-        self.status_label.setText(message)
-    
-    def on_search_finished(self, result: str):
+    def on_search_finished(self, results: list):
         """Handle search completion."""
-        self.results_text.setText(result)
-        self.status_label.setText("Search completed.")
-        self.status_label.setStyleSheet("color: green; padding: 5px;")
-        self.search_button.setEnabled(True)
+        self.canvas.set_dots(results)
     
     def on_search_error(self, error: str):
         """Handle search error."""
-        self.status_label.setText(f"Error: {error}")
-        self.status_label.setStyleSheet("color: red; padding: 5px;")
-        self.results_text.setText(f"Error: {error}")
-        self.search_button.setEnabled(True)
-    
-    def clear_results(self):
-        """Clear the results area."""
-        self.results_text.clear()
-        self.query_input.clear()
-        self.pdf_path_label.setText("No file selected")
-        self.pdf_path_label.setStyleSheet("color: gray;")
-        if hasattr(self, 'pdf_path'):
-            delattr(self, 'pdf_path')
-        self.status_label.setText("Ready")
-        self.status_label.setStyleSheet("color: gray; padding: 5px;")
+        # Clear canvas on error
+        self.canvas.set_dots([])
 
 
 def main():
