@@ -1,0 +1,8 @@
+From Wikipedia, the free encyclopedia
+American writer (born 1967)
+For the American baseball pitcher, see Erik Davis (baseball). For other people, see Eric Davis (disambiguation).
+Erik DavisDavis interviewed in 2019Born (1967-06-12) June 12, 1967 (age 58)Redwood City, California, U.S.OccupationAuthor, cultural critic, freelance journalist, lecturer, radio talk show hostEducationYale UniversityRice University (PhD)SpouseJennifer DumpertWebsitetechgnosis.com
+Erik Davis (born June 12, 1967) is an American writer, scholar, journalist and public speaker whose writings have ranged from rock criticism to cultural analysis to creative explorations of esoteric mysticism.[1] He is perhaps best known for his book Techgnosis: Myth, Magic and Mysticism in the Age of Information, as well as his work on California counterculture, including Burning Man, the human potential movement, and the writings of Philip K. Dick.
+Davis played a critical part in the documentary A Glitch in the Matrix.
+Retrieved from "https://en.wikipedia.org/w/index.php?title=Erik_Davis&oldid=1317602010"
+Categories: 1967 birthsLiving peopleAmerican essayists21st-century American historiansAmerican male non-fiction writersRice University alumniAmerican technology writersAmerican spiritual writersWriters from California21st-century mystics21st-century American male writersPacifica Graduate Institute peopleYale University alumniPhilip K. Dick scholarsPeople from Redwood City, CaliforniaHidden categories: Articles with short descriptionShort description is different from WikidataAll articles with unsourced statementsArticles with unsourced statements from June 2015

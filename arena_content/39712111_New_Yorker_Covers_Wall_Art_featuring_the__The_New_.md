@@ -1,0 +1,1 @@
+New Yorker Covers Wall Art featuring the  The New Yorker Cover - September 19th, 1925 by Max Ree

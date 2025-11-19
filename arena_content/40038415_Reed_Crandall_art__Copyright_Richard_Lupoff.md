@@ -1,0 +1,1 @@
+Reed Crandall art ~ Copyright Richard Lupoff

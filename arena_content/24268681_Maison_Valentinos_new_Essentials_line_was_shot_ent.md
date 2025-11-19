@@ -1,0 +1,6 @@
+Ultimate edit
+Maison Valentino’s new Essentials line was shot entirely by AI techFashion | 11 January 2023Maison Valentino today announces an Essentials menswear line, presenting a curated edit that defines the Italian Maison’s contemporary approach to men’s clothing. Here, timeless garments are presented together as a dynamic line-up of versatile looks realised by the contemporary vision of creative director Pierpaolo Piccioli.
+A youthful approach to shape and structure guides the collection, as Piccioli’s distinctive aesthetic is distilled with new expression. In loose and soft proportions, jackets, foulard shirts, trousers, outerwear, pyjamas and jumpsuits forge a singular identity, either cast in monochrome or neon bursts of colour – including the iconic Valentino Pink PP hue.
+Pushing innovation, the Essentials line is accompanied by a campaign shot entirely using AI technology (the future is here, the future is now). Exploring the relationship between artificial intelligence and fashion, the imagery celebrates our relationship with technology and its game-changing possibilities.
+GALLERYMaison Valentino Essentials line is available now.
+TAGGED WITHFashionValentinoRead Next

@@ -1,0 +1,1 @@
+Campagna identifies two primary reality-systems that emerge from this compulsion towards order: Technic and Magic. Technic, our current dominant reality-system, is a world where everything must be quantifiable, productive, and reducible to clear categories - a world of "standing-reserve," to use Heidegger's term, where everything exists primarily as a resource to be utilized.

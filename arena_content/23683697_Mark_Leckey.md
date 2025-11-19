@@ -1,0 +1,1 @@
+“Research has to go through a body; it has to be lived in some sense—transformed into some sort of lived experience—in order to become whatever we might call art. . . . A lot of art now just points at things. Merely the transfer of something into a gallery is enough to bracket it as art.” 

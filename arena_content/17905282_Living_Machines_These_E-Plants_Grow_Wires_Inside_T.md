@@ -1,0 +1,9 @@
+Image: Linköping University
+Electronic Plants
+A Swedish team comprised of botanists and electrical engineers have developed a way to grow conductive wires inside live plants. This method is achieved by using a transparent conductive gel that’s absorbed into the stems and leaves of cut roses. Hours later, the gel hardens and forms wires within the stems and are capable of carrying an electric current.
+In a paper in the journal Science Advances, the team describes the challenge of electronic plants, saying “Although many attempts have been made to augment plant function with electroactive materials, [until now] plants’ ‘circuitry’ has never been directly merged with electronics.”
+Time explains the method, saying, “The team let a cut rose sit in a solution of water and a special conductive polymer called poly(3,4-ethylenedioxythiophene) — PEDOT for short. Over the next 48 hours, the plant took up the water naturally, and the polymers with it, against which the plant’s defense mechanism reacted. The PEDOT was fixed in place as it spread, forming long chains of conductive molecules — wires built right into the plant.”
+Ultimately, these wires can be used to carry information or power. The end result is a kind of “e-plant” that might even be able to display  data on its leaves.
+Diagram and magnified views showing the PEDOT wires in the rose’s stem. Linköping University
+Potential Applications
+The research still has a long way to go, but the team remains optimistic. Stavrinidou writes that “with integrated and distributed electronics in plants, one can envisage a range of applications including… energy harvesting from photosynthesis, and alternatives to genetic modification for plant optimization.” The method could also lead to developing nanomaterial improvements to the process of photosynthesis.

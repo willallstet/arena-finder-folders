@@ -1,0 +1,1 @@
+Tricolor (Yellow-rumped) Flycatcher -spring male- (Tianjin, China)

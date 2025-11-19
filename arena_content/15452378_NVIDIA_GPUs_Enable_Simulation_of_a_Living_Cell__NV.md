@@ -1,0 +1,20 @@
+Share
+Email0
+Every living cell contains its own bustling microcosm, with thousands of components responsible for energy production, protein building, gene transcription and more.
+Scientists at the University of Illinois at Urbana-Champaign have built a 3D simulation that replicates these physical and chemical characteristics at a particle scale — creating a fully dynamic model that mimics the behavior of a living cell.
+Published in the journal Cell, the project simulates a living minimal cell, which contains a pared-down set of genes essential for the cell’s survival, function and replication. The model uses NVIDIA GPUs to simulate 7,000 genetic information processes over a 20-minute span of the cell cycle – making it what the scientists believe is the longest, most complex cell simulation to date.
+Minimal cells are simpler than naturally occurring ones, making them easier to recreate digitally.
+“Even a minimal cell requires 2 billion atoms,” said Zaida Luthey-Schulten, chemistry professor and co-director of the university’s Center for the Physics of Living Cells. “You cannot do a 3D model like this in a realistic human time scale without GPUs.”
+Once further tested and refined, whole-cell models can help scientists predict how changes to the conditions or genomes of real-world cells will affect their function. But even at this stage, minimal cell simulation can give scientists insight into the physical and chemical processes that form the foundation of living cells.
+“What we found is that fundamental behaviors emerge from the simulated cell — not because we programmed them in, but because we had the kinetic parameters and lipid mechanisms correct in our model,” she said.
+Lattice Microbes, the GPU-accelerated software co-developed by Luthey-Schulten and used to simulate the 3D minimal cell, is available on the NVIDIA NGC software hub.
+Minimal Cell With Maximum Realism
+To build the living cell model, the Illinois researchers simulated one of the simplest living cells, a parasitic bacteria called mycoplasma. They based the model on a trimmed-down version of a mycoplasma cell synthesized by scientists at J. Craig Venter Institute in La Jolla, Calif., which had just under 500 genes to keep it viable.
+For comparison, a single E. coli cell has around 5,000 genes. A human cell has more than 20,000.
+Luthy-Schulten’s team then used known properties of the mycoplasma’s inner workings, including amino acids, nucleotides, lipids and small molecule metabolites to build out the model with DNA, RNA, proteins and membranes.
+“We had enough of the reactions that we could reproduce everything known,” she said.
+Using Lattice Microbes software on NVIDIA Tensor Core GPUs, the researchers ran a 20-minute 3D simulation of the cell’s life cycle, before it starts to substantially expand or replicate its DNA. The model showed that the cell dedicated most of its energy to transporting molecules across the cell membrane, which fits its profile as a parasitic cell.
+“If you did these calculations serially, or at an all-atom level, it’d take years,” said graduate student and paper lead author Zane Thornburg. “But because they’re all independent processes, we could bring parallelization into the code and make use of GPUs.”
+Thornburg is working on another GPU-accelerated project to simulate growth and cell division in 3D. The team has recently adopted NVIDIA DGX systems and RTX A5000 GPUs to further accelerate its work, and found that using A5000 GPUs sped up the benchmark simulation time by 40 percent compared to a development workstation with a previous-generation NVIDIA GPU.
+Learn more about researchers using NVIDIA GPUs to accelerate science breakthroughs by registering free for NVIDIA GTC, running online March 21-24.
+Main image is a snapshot from the 20-minute 3D spatial simulation, showing yellow and purple ribosomes, red and blue degradasomes, and smaller spheres representing DNA polymers and proteins.
