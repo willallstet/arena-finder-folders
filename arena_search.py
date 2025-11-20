@@ -20,6 +20,7 @@ except ImportError:
 from beeai_framework.backend.embedding import EmbeddingModel
 from beeai_framework.backend.text_splitter import TextSplitter
 from beeai_framework.backend.vector_store import VectorStore
+from tools.search.arena.arena import ArenaToolResult, ArenaToolOutput
 
 VECTOR_DB_PATH = "arena_vector_store"  # Path to persistent storage
 
@@ -70,10 +71,11 @@ async def extract_text_from_pdf(pdf_path: str) -> str:
         raise Exception(f"Failed to extract text from PDF: {e}") from e
 
 
-async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5) -> list:
+async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 10) -> list:
     """
-    Extract text from PDF, chunk it, and find the top 20 most similar chunks across all PDF chunks.
-    Returns a list of DocumentWithScore objects.
+    Extract text from PDF, chunk it, and find similar chunks across all PDF chunks.
+    Searches for more results to allow deduplication by block_id in the GUI.
+    Returns a list of DocumentWithScore objects (up to 60 unique chunks).
     """
     # Extract text from PDF
     pdf_text = await extract_text_from_pdf(pdf_path)
@@ -96,11 +98,13 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5
     pdf_chunks = await text_splitter.split_documents([pdf_document])
     
     # Search for similar chunks for each PDF chunk and collect all results
+    # Use higher k to get more results for deduplication
     all_results = []
     for pdf_chunk in pdf_chunks:
         try:
             # Search using the PDF chunk content as the query
-            results = await vector_store.search(query=pdf_chunk.content, k=k)
+            # Use k*2 to get more candidates for deduplication
+            results = await vector_store.search(query=pdf_chunk.content, k=k * 2)
             all_results.extend(results)
         except Exception as e:
             print(f"  Error searching chunk: {e}", file=sys.stderr)
@@ -110,7 +114,7 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5
         return []
     
     # Sort by similarity score (lower is better for distance-based scores)
-    # and get top 20 unique chunks (by document content)
+    # Return more results (up to 60) to allow deduplication by block_id in GUI
     seen_docs = set()
     unique_results = []
     for result in sorted(all_results, key=lambda x: x.score):
@@ -119,7 +123,7 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 5
         if doc_key not in seen_docs:
             seen_docs.add(doc_key)
             unique_results.append(result)
-            if len(unique_results) >= 20:
+            if len(unique_results) >= 60:  # Return more for block_id deduplication
                 break
     
     return unique_results
@@ -134,29 +138,88 @@ async def search(vector_store: VectorStore, query: str, k: int = 5) -> None:
 
     try:
         # Search for similar documents
-        results = await vector_store.search(query=query, k=k)
+        # Request more results to allow for re-ranking
+        results = await vector_store.search(query=query, k=k * 3)
 
-        if not results:
+        tool_results = []
+        for result in results:
+            document = result.document
+            source = document.metadata.get("source", "Unknown")
+            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
+            
+            block_id = None
+            url = "Unknown"
+            if filename != "Unknown" and "_" in filename:
+                parts = filename.split("_")
+                if parts[0].isdigit():
+                    block_id = parts[0]
+                    url = f"https://are.na/block/{block_id}"
+            
+            tool_results.append(
+                ArenaToolResult(
+                    title=filename,
+                    description=document.content,
+                    url=url
+                )
+            )
+        
+        output = ArenaToolOutput(tool_results)
+
+        if output.is_empty():
             print("No results found.")
             return
 
-        print(f"\nFound {len(results)} similar chunks:\n")
-
-        for i, result in enumerate(results, 1):
-            document = result.document
-            score = result.score
-
-            # Get metadata
-            source = document.metadata.get("source", "Unknown")
-            # Extract just the filename from the full path
+        # Re-rank results: prioritize exact filename matches
+        exact_matches = []
+        other_matches = []
+        
+        query_lower = query.lower()
+        
+        # We need to pair original results with tool results to keep score info
+        paired_results = list(zip(results, tool_results))
+        
+        for result, tool_result in paired_results:
+            source = result.document.metadata.get("source", "Unknown")
             filename = os.path.basename(source) if source != "Unknown" else "Unknown"
             
+            # Check for exact match in filename (ignoring extension)
+            filename_no_ext = os.path.splitext(filename)[0].lower()
+            
+            if query_lower in filename.lower() or query_lower == filename_no_ext:
+                exact_matches.append((result, tool_result))
+            else:
+                other_matches.append((result, tool_result))
+                
+        # Combine results, placing exact matches first
+        final_pairs = exact_matches + other_matches
+        
+        # Trim to requested k
+        final_pairs = final_pairs[:k]
+        
+        print(f"\nFound {len(final_pairs)} similar chunks:\n")
+        
+        # Use output.sources() to show we can use helper methods
+        # (Just as an example of using the tool output capabilities)
+        # sources = output.sources()
+        # print(f"Sources found: {len(sources)}")
+
+        for i, (result, tool_result) in enumerate(final_pairs, 1):
+            document = result.document
+            score = result.score
+            
+            # Use data from tool_result where appropriate
+            filename = tool_result.title
+            url = tool_result.url
+            source = document.metadata.get("source", "Unknown")
+            
             # Get content preview (first 300 chars)
-            content = document.content
+            content = tool_result.description
             content_preview = content[:300] + "..." if len(content) > 300 else content
 
             print(f"{i}. Similarity Score: {score:.4f}")
             print(f"   File: {filename}")
+            if url != "Unknown":
+                print(f"   URL: {url}")
             if source != "Unknown":
                 print(f"   Path: {source}")
             print(f"   Content:")

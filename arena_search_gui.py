@@ -2,36 +2,17 @@
 """
 Simple drag-and-drop GUI for searching the arena vector store.
 """
-
 import asyncio
 import math
 import os
-import random
 import sys
 import webbrowser
-from typing import Optional
-from PyQt6.QtCore import QRect
-
-try:
-    from PyQt6.QtWidgets import (
-        QApplication,
-        QMainWindow,
-        QWidget,
-    )
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-    from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QFont
-except ImportError:
-    print("Error: PyQt6 is required. Install with: pip install PyQt6", file=sys.stderr)
-    sys.exit(1)
-
+from PyQt6.QtCore import QRect, QRectF, Qt, QThread, pyqtSignal, QTimer
+from tools.search.arena.arena import ArenaTool
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget)
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QTextOption
 from arena_search import load_vector_store, search_pdf_chunks
-
-try:
-    import httpx
-except ImportError:
-    print("Warning: httpx not available. Install with: pip install httpx", file=sys.stderr)
-    httpx = None
-
+import httpx
 
 class DotCanvas(QWidget):
     """Canvas widget that displays dots positioned by similarity score."""
@@ -45,6 +26,9 @@ class DotCanvas(QWidget):
         self.setMinimumSize(800, 800)
         # Enable mouse tracking for hover detection
         self.setMouseTracking(True)
+        
+        # Initialize Arena tool
+        self.arena_tool = ArenaTool()
         
         # Load logo
         logo_path = os.path.join(os.path.dirname(__file__), "assets", "arena_Logo.png")
@@ -120,7 +104,14 @@ class DotCanvas(QWidget):
         
         # Extract block IDs and URLs from results and store with scores
         dot_data = []
-        for result in results:
+        seen_blocks = set()  # Track unique block IDs
+        
+        # Sort results by score to get most similar first
+        # Lower scores typically indicate more similar items (distance-based)
+        sorted_results = sorted(results, key=lambda x: x.score)
+        
+        # Deduplicate by block_id, keeping only top 20 unique blocks (most similar)
+        for result in sorted_results:
             document = result.document
             score = result.score
             source = document.metadata.get("source", "Unknown")
@@ -133,26 +124,23 @@ class DotCanvas(QWidget):
                 block_id = filename.split("_")[0]
                 url = f"https://are.na/block/{block_id}"
             
-            dot_data.append((score, url, filename, block_id))
+            # Skip if block_id is None or if we already have this block_id
+            if block_id is None:
+                continue  # Skip results without valid block_id
+            
+            if block_id not in seen_blocks:
+                seen_blocks.add(block_id)
+                dot_data.append((score, url, filename, block_id))
+                
+                # Stop once we have 20 unique blocks
+                if len(dot_data) >= 20:
+                    break
         
-        # Sort by score (highest score = most similar first)
-        dot_data.sort(key=lambda x: x[0], reverse=True)
-        
-        # Alternate placing from beginning and end of sorted list
-        num_dots = len(dot_data)
-        ordered_dots = []
-        start_idx = 0
-        end_idx = num_dots - 1
-        
-        for i in range(num_dots):
-            if i % 2 == 0:
-                # Even positions: take from beginning (most similar)
-                ordered_dots.append(dot_data[start_idx])
-                start_idx += 1
-            else:
-                # Odd positions: take from end (least similar)
-                ordered_dots.append(dot_data[end_idx])
-                end_idx -= 1
+        # Sort by score ascending (lower is better/more similar)
+        # Arrange clockwise from most to least similar
+        dot_data.sort(key=lambda x: x[0])
+        ordered_dots = dot_data
+        num_dots = len(ordered_dots)
         
         # Assign evenly spaced angles around the circle
         for i, (score, url, filename, block_id) in enumerate(ordered_dots):
@@ -184,12 +172,12 @@ class DotCanvas(QWidget):
                     print(f"Warning: ARENA_ACCESS_TOKEN not set. Cannot load image for block {block_id}", file=sys.stderr)
                     return
                 
-                # Fetch block data from Arena API with authentication
-                url = f"https://api.are.na/v2/blocks/{block_id}"
-                headers = {"Authorization": f"Bearer {access_token}"}
-                response = httpx.get(url, headers=headers, timeout=10.0)
-                response.raise_for_status()
-                block_data = response.json()
+                # Use asyncio to call the async tool method
+                async def fetch_block_data():
+                    async with httpx.AsyncClient() as client:
+                        return await self.arena_tool._fetch_block(client, block_id, access_token)
+                
+                block_data = asyncio.run(fetch_block_data())
                 
                 # Store title
                 title = block_data.get("title", "")
@@ -233,10 +221,12 @@ class DotCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
+        # Calculate center of full canvas (graph is centered regardless of overlays)
+        # Adjust center_y slightly upward for better visual balance
         width = self.width()
         height = self.height()
         center_x = width / 2
-        center_y = height / 2
+        center_y = height / 2 - 30  # Move center up by 30px for visual balance
         
         # Find min and max scores to normalize
         if not self.dots:
@@ -250,12 +240,12 @@ class DotCanvas(QWidget):
         max_score = max(scores)
         score_range = max_score - min_score if max_score != min_score else 1
         
-        # Set distance range: most similar at 120px
-        min_distance = 120  # Most similar (highest score) distance from center
+        # Set distance range: most similar at 110px
+        min_distance = 100  # Most similar (best score) distance from center
         # Calculate maximum distance to stay within window bounds
-        # Leave margin for dot size (8px) and padding (~10px)
-        available_radius = min(center_x, center_y) - 20  # Leave margin from edges
-        max_distance = min(600, available_radius)  # Cap at 600px but ensure within bounds
+        # Use full window dimensions for centering (overlays can overlap)
+        available_radius = min(center_x, center_y) - 20  # Small margin from edges only
+        max_distance = min(590, available_radius)  # Cap at 590px but ensure within bounds
         
         # Draw block images and lines
         for i, (score, url, filename, angle, block_id) in enumerate(self.dots):
@@ -293,32 +283,41 @@ class DotCanvas(QWidget):
             # Fallback: draw title text if available, otherwise dot
             if block_id and block_id in self.block_titles:
                 title = self.block_titles[block_id]
-                # Get first 30 characters, add ellipsis if longer
-                if len(title) > 30:
-                    display_title = title[:27] + "..."
-                else:
-                    display_title = title
                 
-                # Draw text centered at position
+                # Draw text in a box with word wrapping
                 font = QFont("Arial", 9)
                 painter.setFont(font)
-                text_rect = painter.fontMetrics().boundingRect(display_title)
-                text_x = x - text_rect.width() / 2
-                text_y = y + text_rect.height() / 2
                 
-                # Draw white background for text
-                padding = 3
-                bg_x = text_x - padding
-                bg_y = text_y - text_rect.height() - padding
-                bg_width = text_rect.width() + padding * 2
-                bg_height = text_rect.height() + padding * 2
+                # Set box dimensions (similar to image size)
+                box_width = 80  # Fixed width for text box
+                box_height = 50  # Fixed height for text box
+                padding = 5
+                
+                # Calculate box position (centered at dot position)
+                bg_x = x - box_width / 2
+                bg_y = y - box_height / 2
+                
+                # Draw white background box
                 painter.setBrush(QColor(255, 255, 255))
                 painter.setPen(QPen(QColor(0, 0, 0), 1))
-                painter.drawRect(int(bg_x), int(bg_y), int(bg_width), int(bg_height))
+                painter.drawRect(int(bg_x), int(bg_y), box_width, box_height)
                 
-                # Draw text
+                # Set up text rect with word wrapping (use QRectF for QTextOption)
+                text_rect = QRectF(
+                    bg_x + padding,
+                    bg_y + padding,
+                    box_width - padding * 2,
+                    box_height - padding * 2
+                )
+                
+                # Enable word wrapping
+                text_option = QTextOption()
+                text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
+                text_option.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                
+                # Draw wrapped text
                 painter.setPen(QPen(QColor(0, 0, 0), 1))
-                painter.drawText(int(text_x), int(text_y), display_title)
+                painter.drawText(text_rect, title, text_option)
             else:
                 # Fallback: draw dot
                 painter.setPen(QPen(QColor(0, 0, 0), 2))
@@ -330,6 +329,45 @@ class DotCanvas(QWidget):
         if self.logo and not self.logo.isNull():
             self._draw_rotated_logo(painter, center_x, center_y)
         
+        # Draw hovered dot's title in top left corner
+        if self.hovered_dot_index is not None and self.hovered_dot_index < len(self.dots):
+            score, url, filename, angle, block_id = self.dots[self.hovered_dot_index]
+            
+            title = ""
+            if block_id and block_id in self.block_titles:
+                title = self.block_titles[block_id]
+            
+            if title:
+                # Set font to 20pt Arial
+                font = QFont("Arial", 20)
+                painter.setFont(font)
+                text_rect = painter.fontMetrics().boundingRect(title)
+                
+                # Position in top left corner with margin
+                margin = 20
+                padding = 8
+                bg_rect_width = text_rect.width() + padding * 2
+                bg_rect_height = text_rect.height() + padding * 2
+                bg_rect_x = margin
+                bg_rect_y = margin
+                
+                # Draw white background
+                painter.setBrush(QColor(255, 255, 255))
+                painter.setPen(QPen(Qt.PenStyle.NoPen))
+                painter.drawRect(int(bg_rect_x), int(bg_rect_y), int(bg_rect_width), int(bg_rect_height))
+                
+                # Draw black dashed border
+                dashed_pen = QPen(QColor(0, 0, 0), 1)
+                dashed_pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(dashed_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(int(bg_rect_x), int(bg_rect_y), int(bg_rect_width), int(bg_rect_height))
+                
+                # Draw text centered in box
+                painter.setPen(QPen(QColor(0, 0, 0), 1))
+                text_bg_rect = QRect(int(bg_rect_x), int(bg_rect_y), int(bg_rect_width), int(bg_rect_height))
+                painter.drawText(text_bg_rect, Qt.AlignmentFlag.AlignCenter, title)
+
         # Draw hovered dot's similarity score in top right corner
         if self.hovered_dot_index is not None and self.hovered_dot_index < len(self.dots):
             score, url, filename, angle, block_id = self.dots[self.hovered_dot_index]
@@ -400,7 +438,7 @@ class DotCanvas(QWidget):
         width = self.width()
         height = self.height()
         center_x = width / 2
-        center_y = height / 2
+        center_y = height / 2 - 30  # Match adjusted center from paintEvent
         
         # Find min and max scores
         if not self.dots:
@@ -414,12 +452,12 @@ class DotCanvas(QWidget):
         max_score = max(scores)
         score_range = max_score - min_score if max_score != min_score else 1
         
-        # Set distance range: most similar at 120px
-        min_distance = 120  # Most similar (highest score) distance from center
+        # Set distance range: most similar at 110px
+        min_distance = 110  # Most similar (highest score) distance from center
         # Calculate maximum distance to stay within window bounds
         # Leave margin for image size (50px) and padding (~10px)
         available_radius = min(center_x, center_y) - 20  # Leave margin from edges
-        max_distance = min(600, available_radius)  # Cap at 600px but ensure within bounds
+        max_distance = min(590, available_radius)  # Cap at 590px but ensure within bounds
         hover_radius = 30  # Hover radius for 50x50px images
         
         # Check each dot for hover
@@ -469,7 +507,7 @@ class DotCanvas(QWidget):
         width = self.width()
         height = self.height()
         center_x = width / 2
-        center_y = height / 2
+        center_y = height / 2 - 30  # Match adjusted center from paintEvent
         
         # Find min and max scores
         if not self.dots:
@@ -480,12 +518,12 @@ class DotCanvas(QWidget):
         max_score = max(scores)
         score_range = max_score - min_score if max_score != min_score else 1
         
-        # Set distance range: most similar at 120px
-        min_distance = 120  # Most similar (highest score) distance from center
+        # Set distance range: most similar at 110px
+        min_distance = 110  # Most similar (highest score) distance from center
         # Calculate maximum distance to stay within window bounds
         # Leave margin for image size (50px) and padding (~10px)
         available_radius = min(center_x, center_y) - 20  # Leave margin from edges
-        max_distance = min(600, available_radius)  # Cap at 600px but ensure within bounds
+        max_distance = min(590, available_radius)  # Cap at 590px but ensure within bounds
         click_radius = 30  # Click radius for 50x50px images
         
         # Check each dot
@@ -598,7 +636,7 @@ class ArenaSearchGUI(QMainWindow):
         self.worker = SearchWorker(
             vector_store=self.vector_store,
             file_path=file_path,
-            k=5
+            k=10  # Search for more results to allow deduplication
         )
         self.worker.finished.connect(self.on_search_finished)
         self.worker.error.connect(self.on_search_error)
@@ -606,6 +644,20 @@ class ArenaSearchGUI(QMainWindow):
     
     def on_search_finished(self, results: list):
         """Handle search completion."""
+        print(f"\nReceived {len(results)} search results:")
+        print("-" * 70)
+        for i, result in enumerate(results):
+            document = result.document
+            score = result.score
+            source = document.metadata.get("source", "Unknown")
+            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
+            content_preview = document.content[:80].replace('\n', ' ').replace('\r', ' ')
+            print(f"{i+1}. Score: {score:.4f} | File: {filename}")
+            print(f"   Source: {source}")
+            print(f"   Content preview: {content_preview}...")
+        print("-" * 70)
+        print(f"Note: Lower scores = better matches (distance-based scoring)\n")
+
         # Queue results to be displayed after completing a full rotation
         self.canvas.set_pending_results(results)
     

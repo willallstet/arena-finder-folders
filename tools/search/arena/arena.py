@@ -1,23 +1,11 @@
-import html
 import io
-import re
+import sys
 from pathlib import Path
 from typing import Any, Self
-
 import httpx
-
-try:
-    from pypdf import PdfReader
-except ImportError:
-    PdfReader = None  # type: ignore
-
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    BeautifulSoup = None  # type: ignore
-
+from pypdf import PdfReader
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
-
 from beeai_framework.context import RunContext
 from beeai_framework.emitter.emitter import Emitter
 from beeai_framework.tools.errors import ToolError
@@ -43,7 +31,7 @@ class ArenaToolOutput(SearchToolOutput):
 
 class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
     name = "Are.na"
-    description = "Fetch all block titles from a user's Are.na channels, including channels they don't own."
+    description = "A tool for fetching data from the Are.na API."
     input_schema = ArenaToolInput
     _base_url = "https://api.are.na/v2"
 
@@ -81,6 +69,7 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
             data = response.json()
 
             channels = data.get("channels", [])
+            
             if not channels:
                 break
 
@@ -92,6 +81,16 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
             page += 1
 
         return all_channels
+
+    async def _fetch_block(
+        self, client: httpx.AsyncClient, block_id: str, access_token: str
+    ) -> dict[str, Any]:
+        """Fetch a single block."""
+        headers = {"Authorization": f"Bearer {access_token}"}
+        url = f"{self._base_url}/blocks/{block_id}"
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
     async def _fetch_channel_blocks(
         self, client: httpx.AsyncClient, channel_slug: str, access_token: str
@@ -156,34 +155,22 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
                     filepath.write_text(content, encoding="utf-8")
                 except Exception as e:
                     # Log error but continue processing other blocks
-                    import sys
                     print(f"Error saving block {block_id}: {e}", file=sys.stderr)
 
     async def _save_attachment_blocks(
         self, blocks: list[dict[str, Any]], client: httpx.AsyncClient
     ) -> None:
         """Download PDF attachments from source URLs and extract text as markdown files."""
-        if PdfReader is None:
-            import sys
-            print(
-                "Warning: pypdf not installed. Cannot extract text from PDFs. "
-                "Install with: pip install pypdf",
-                file=sys.stderr,
-            )
-            return
-
         # Create arena_content directory if it doesn't exist
         content_dir = Path("arena_content")
         content_dir.mkdir(exist_ok=True)
-
         for block in blocks:
             if block.get("class") == "Attachment":
-                # Check if it's a PDF
+
                 title = block.get("title", "")
                 if not title or not title.lower().endswith(".pdf"):
                     continue
 
-                # Get source URL
                 source = block.get("source")
                 if not source:
                     continue
@@ -196,7 +183,6 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
                 if not block_id:
                     continue
 
-                # Download PDF
                 try:
                     response = await client.get(source_url, timeout=60.0, follow_redirects=True)
                     response.raise_for_status()
@@ -237,8 +223,6 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
 
                 except Exception as e:
                     # Log error but continue processing other blocks
-                    import sys
-
                     print(
                         f"Error processing PDF attachment {block_id} from {source_url}: {e}",
                         file=sys.stderr,
@@ -256,17 +240,14 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
         # Try to find main content area
         main_content = None
         
-        # First, try semantic HTML5 tags
         main_content = soup.find("main") or soup.find("article")
         
-        # If not found, try common content container IDs
         if not main_content:
             for content_id in ["content", "main", "main-content", "article", "post", "entry", "story", "article-body"]:
                 main_content = soup.find(id=content_id)
                 if main_content:
                     break
         
-        # If still not found, try common content container classes
         if not main_content:
             for content_class in ["content", "main", "main-content", "article", "post", "entry", "story", "article-body", "post-content"]:
                 main_content = soup.find(class_=content_class)
@@ -306,10 +287,8 @@ class ArenaTool(Tool[ArenaToolInput, ToolRunOptions, ArenaToolOutput]):
 
         for block in blocks:
             if block.get("class") == "Link":
-                # Get source URL
                 source = block.get("source")
                 if not source:
-                    # Fallback to block's url field if source is not available
                     source_url = block.get("url")
                 else:
                     source_url = source.get("url")
