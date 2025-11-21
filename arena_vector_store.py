@@ -1,7 +1,12 @@
 import asyncio
 import json
 import os
+import warnings
 from pathlib import Path
+
+# Suppress Pydantic warnings about validate_default
+warnings.filterwarnings("ignore", message=".*validate_default.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 from beeai_framework.backend.document_loader import DocumentLoader
 from beeai_framework.backend.embedding import EmbeddingModel
@@ -41,30 +46,20 @@ def get_new_files(markdown_files: list[Path], processed_files: dict[str, float])
         file_str = str(file_path)
         mtime = file_path.stat().st_mtime
         
-        # File is new if not in processed list, or if modification time has changed
-        if file_str not in processed_files or processed_files[file_str] != mtime:
+        # File is new if not in processed list
+        if file_str not in processed_files:
             new_files.append(file_path)
     
     return new_files
 
 
 async def setup_vector_store() -> VectorStore | None:
-    """
-    Setup vector store with arena_content markdown files.
-    Only processes new or modified files.
-    """
-    # Create embedding model
     embedding_model = EmbeddingModel.from_name("ollama:nomic-embed-text")
-
-    # Load existing vector store if available
-    vector_store = None
     if os.path.exists(VECTOR_DB_PATH):
-        print(f"Loading vector store from: {VECTOR_DB_PATH}")
         vector_store = TemporalVectorStore.load(
             path=VECTOR_DB_PATH, embedding_model=embedding_model
         )
     else:
-        # Create new vector store if it doesn't exist
         if POPULATE_VECTOR_DB:
             vector_store = VectorStore.from_name(
                 name="beeai:TemporalVectorStore", embedding_model=embedding_model
@@ -86,14 +81,6 @@ async def setup_vector_store() -> VectorStore | None:
 
     # Filter to only new or modified files
     new_files = get_new_files(all_markdown_files, processed_files)
-    
-    if not new_files:
-        print(f"All {len(all_markdown_files)} files have already been processed.")
-        if vector_store:
-            return vector_store
-        else:
-            print("No vector store exists. Set POPULATE_VECTOR_DB=True to create one.")
-            return None
 
     print(f"Found {len(all_markdown_files)} total markdown files")
     print(f"Processing {len(new_files)} new or modified files...")
@@ -121,8 +108,7 @@ async def setup_vector_store() -> VectorStore | None:
                 continue
 
         if not all_documents:
-            print("No new documents to process")
-            # Still save the processed files tracker in case files were deleted
+            # save the processed files tracker in case files were deleted
             save_processed_files(updated_processed_files)
             return vector_store
 
@@ -131,15 +117,10 @@ async def setup_vector_store() -> VectorStore | None:
             name="langchain:RecursiveCharacterTextSplitter", chunk_size=1000, chunk_overlap=200
         )
         documents = await text_splitter.split_documents(all_documents)
-
-        print(f"Split into {len(documents)} document chunks")
         
-        # Process documents in smaller batches to avoid connection issues
-        batch_size = 20  # Process 20 documents at a time
+        batch_size = 20 
         total_batches = (len(documents) + batch_size - 1) // batch_size
-        
-        print(f"Processing {len(documents)} documents in {total_batches} batches of {batch_size}...")
-        
+                
         for i in range(0, len(documents), batch_size):
             batch = documents[i:i + batch_size]
             batch_num = (i // batch_size) + 1
@@ -152,78 +133,27 @@ async def setup_vector_store() -> VectorStore | None:
             while retry_count < max_retries and not success:
                 try:
                     await vector_store.add_documents(documents=batch)
-                    print(f"✓ Processed batch {batch_num}/{total_batches} ({len(batch)} documents)")
+                    print(f"Processed {batch_num}/{total_batches} ")
                     success = True
                 except Exception as e:
                     retry_count += 1
                     if retry_count < max_retries:
-                        print(f"⚠ Error processing batch {batch_num} (attempt {retry_count}/{max_retries}): {e}")
-                        print(f"   Retrying in 2 seconds...")
                         await asyncio.sleep(2)
                     else:
-                        print(f"✗ Failed to process batch {batch_num} after {max_retries} attempts: {e}")
-                        print(f"   Skipping this batch and continuing...")
+                        print(f"SKIPP-ING ERROR BATCH {batch_num}")
                         break
 
-        print("Vector store populated with new documents")
-
-        # Save vector store to disk
-        if hasattr(vector_store, "dump"):
-            vector_store.dump(path=VECTOR_DB_PATH)
-            print(f"Vector store saved to: {VECTOR_DB_PATH}")
-
-        # Save updated processed files tracker
+        vector_store.dump(path=VECTOR_DB_PATH)
         save_processed_files(updated_processed_files)
-        print(f"Updated processed files tracker: {PROCESSED_FILES_TRACKER}")
-
-    return vector_store
-
-
-async def search_similar_chunks(vector_store: VectorStore, query: str, k: int = 5) -> None:
-    """
-    Search for the most semantically similar chunks to a query.
-    """
-    print(f"\nSearching for chunks similar to: '{query}'")
-    print("-" * 60)
-
-    # Search for similar documents
-    results = await vector_store.search(query=query, k=k)
-
-    print(f"Found {len(results)} similar chunks:\n")
-
-    for i, result in enumerate(results, 1):
-        document = result.document
-        score = result.score
-
-        # Get metadata
-        source = document.metadata.get("source", "Unknown")
-        content_preview = document.content[:200] + "..." if len(document.content) > 200 else document.content
-
-        print(f"{i}. Score: {score:.4f}")
-        print(f"   Source: {source}")
-        print(f"   Content: {content_preview}")
-        print()
 
 
 async def main() -> None:
     """
-    Main function to setup vector store and search for similar chunks.
+    Main function to setup and populate the vector store.
+    Use arena_search.py for searching the vector store.
     """
     # Setup vector store
-    vector_store = await setup_vector_store()
-
-    if vector_store is None:
-        raise FileNotFoundError(
-            "Failed to instantiate Vector Store. "
-            "Either set POPULATE_VECTOR_DB=True to create a new one, or ensure the database file exists."
-        )
-
-    # Hardcoded user query for demonstration
-    user_query = "What is intelligence?"
-
-    # Search for similar chunks
-    await search_similar_chunks(vector_store, user_query, k=5)
-
+    await setup_vector_store()
 
 if __name__ == "__main__":
     asyncio.run(main())
