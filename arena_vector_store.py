@@ -7,6 +7,8 @@ from beeai_framework.backend.document_loader import DocumentLoader
 from beeai_framework.backend.embedding import EmbeddingModel
 from beeai_framework.backend.text_splitter import TextSplitter
 from beeai_framework.backend.vector_store import VectorStore
+from beeai_framework.adapters.beeai.backend.vector_store import TemporalVectorStore
+
 
 VECTOR_DB_PATH = "arena_vector_store"  # Path for persistent storage
 ARENA_CONTENT_DIR = "arena_content"  # Directory containing markdown files
@@ -58,8 +60,6 @@ async def setup_vector_store() -> VectorStore | None:
     vector_store = None
     if os.path.exists(VECTOR_DB_PATH):
         print(f"Loading vector store from: {VECTOR_DB_PATH}")
-        from beeai_framework.adapters.beeai.backend.vector_store import TemporalVectorStore
-
         vector_store = TemporalVectorStore.load(
             path=VECTOR_DB_PATH, embedding_model=embedding_model
         )
