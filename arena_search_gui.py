@@ -14,12 +14,82 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QTextOption
 from arena_search import load_vector_store, search_pdf_chunks
 import httpx
 
+class ImageLoaderWorker(QThread):
+    """Worker thread for loading block images sequentially using sync httpx."""
+    image_loaded = pyqtSignal(str, object, str)  # block_id, qimage, title
+    
+    def __init__(self):
+        super().__init__()
+        self.queue = []
+        self.running = True
+        self.access_token = os.getenv("ARENA_ACCESS_TOKEN")
+        
+    def add_block(self, block_id):
+        """Add a block ID to the processing queue."""
+        if block_id not in self.queue:
+            self.queue.append(block_id)
+    
+    def stop(self):
+        self.running = False
+        self.wait()
+        
+    def run(self):
+        """Process the queue."""
+        if not self.access_token:
+            # print("Warning: ARENA_ACCESS_TOKEN not set.", file=sys.stderr)
+            pass
+
+        while self.running:
+            if not self.queue:
+                self.msleep(100)
+                continue
+                
+            # Process next block
+            block_id = self.queue.pop(0)
+            try:
+                if not self.access_token:
+                    continue
+                    
+                # Use synchronous httpx
+                api_url = f"https://api.are.na/v2/blocks/{block_id}"
+                headers = {"Authorization": f"Bearer {self.access_token}"}
+                
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.get(api_url, headers=headers)
+                    response.raise_for_status()
+                    block_data = response.json()
+                
+                title = block_data.get("title", "")
+                
+                # Get image URL
+                image_url = None
+                if block_data.get("image") and block_data["image"].get("thumb"):
+                    image_url = block_data["image"]["thumb"].get("url")
+                
+                img_obj = None
+                if image_url:
+                    with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                        img_response = client.get(image_url)
+                        img_response.raise_for_status()
+                        image_data = img_response.content
+                        
+                        if image_data:
+                            from PyQt6.QtGui import QImage
+                            img_obj = QImage.fromData(image_data)
+                
+                self.image_loaded.emit(block_id, img_obj, title)
+                
+            except Exception:
+                # Ignore errors to keep worker alive
+                pass
+
+
 class DotCanvas(QWidget):
     """Canvas widget that displays dots positioned by similarity score."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.dots = []  # List of (score, url, filename, angle) tuples
+        self.dots = []  # List of (score, url, filename, angle, block_id)
         self.block_images = {}  # Dict mapping block_id to QPixmap
         self.block_titles = {}  # Dict mapping block_id to title
         self.hovered_dot_index = None  # Index of dot being hovered, or None
@@ -27,8 +97,10 @@ class DotCanvas(QWidget):
         # Enable mouse tracking for hover detection
         self.setMouseTracking(True)
         
-        # Initialize Arena tool
-        self.arena_tool = ArenaTool()
+        # Initialize image loader
+        self.image_loader = ImageLoaderWorker()
+        self.image_loader.image_loaded.connect(self.on_image_loaded)
+        self.image_loader.start()
         
         # Load logo
         logo_path = os.path.join(os.path.dirname(__file__), "assets", "arena_Logo.png")
@@ -44,6 +116,29 @@ class DotCanvas(QWidget):
         self.pending_results = None  # Results waiting to be displayed
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_rotation)
+
+    def on_image_loaded(self, block_id, qimage, title):
+        """Handle loaded image from worker."""
+        self.block_titles[block_id] = title
+        
+        if qimage and not qimage.isNull():
+            pixmap = QPixmap.fromImage(qimage)
+            # Scale to 50x50
+            scaled_pixmap = pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.block_images[block_id] = scaled_pixmap
+        
+        self.update()
+
+    def _load_block_image(self, block_id: str):
+        """Queue block image for loading."""
+        if block_id in self.block_images:
+            return
+            
+        # Mark as loading (using None placeholder)
+        self.block_images[block_id] = None
+        
+        if self.image_loader:
+            self.image_loader.add_block(block_id)
     
     def update_rotation(self):
         """Update rotation angle and trigger repaint."""
@@ -92,65 +187,24 @@ class DotCanvas(QWidget):
             self.stop_spinning()
             self.set_dots(results)
     
-    def set_dots(self, results: list):
-        """Set the dots to display from search results."""
-        self.dots = []
+    def set_dots(self, dots_data):
+        """Set the dots to display directly from pre-processed data.
+        
+        Args:
+            dots_data: List of tuples (score, url, filename, angle, block_id)
+        """
+        self.dots = dots_data
+        
         # Clear image and title cache when setting new dots
         self.block_images = {}
         self.block_titles = {}
         
-        if not results:
-            return
-        
-        # Extract block IDs and URLs from results and store with scores
-        dot_data = []
-        seen_blocks = set()  # Track unique block IDs
-        
-        # Sort results by score to get most similar first
-        # Lower scores typically indicate more similar items (distance-based)
-        sorted_results = sorted(results, key=lambda x: x.score)
-        
-        # Deduplicate by block_id, keeping only top 20 unique blocks (most similar)
-        for result in sorted_results:
-            document = result.document
-            score = result.score
-            source = document.metadata.get("source", "Unknown")
-            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-            
-            # Extract block ID from filename (part before underscore)
-            block_id = None
-            url = None
-            if filename != "Unknown" and "_" in filename:
-                block_id = filename.split("_")[0]
-                url = f"https://are.na/block/{block_id}"
-            
-            # Skip if block_id is None or if we already have this block_id
-            if block_id is None:
-                continue  # Skip results without valid block_id
-            
-            if block_id not in seen_blocks:
-                seen_blocks.add(block_id)
-                dot_data.append((score, url, filename, block_id))
-                
-                # Stop once we have 20 unique blocks
-                if len(dot_data) >= 20:
-                    break
-        
-        # Sort by score ascending (lower is better/more similar)
-        # Arrange clockwise from most to least similar
-        dot_data.sort(key=lambda x: x[0])
-        ordered_dots = dot_data
-        num_dots = len(ordered_dots)
-        
-        # Assign evenly spaced angles around the circle
-        for i, (score, url, filename, block_id) in enumerate(ordered_dots):
-            angle = (i / num_dots) * 2 * math.pi
-            self.dots.append((score, url, filename, angle, block_id))
-            # Start loading image for this block
-            if block_id:
+        # Fetch images for blocks with URLs
+        for _, url, _, _, block_id in self.dots:
+            if block_id and url != "Unknown":
                 self._load_block_image(block_id)
-        
-        self.update()  # Trigger repaint
+                
+        self.update()
     
     def _load_block_image(self, block_id: str):
         """Load block image from Arena API asynchronously."""
@@ -172,12 +226,14 @@ class DotCanvas(QWidget):
                     print(f"Warning: ARENA_ACCESS_TOKEN not set. Cannot load image for block {block_id}", file=sys.stderr)
                     return
                 
-                # Use asyncio to call the async tool method
-                async def fetch_block_data():
-                    async with httpx.AsyncClient() as client:
-                        return await self.arena_tool._fetch_block(client, block_id, access_token)
+                # Use synchronous httpx instead of asyncio/arena_tool to avoid event loop conflicts
+                api_url = f"https://api.are.na/v2/blocks/{block_id}"
+                headers = {"Authorization": f"Bearer {access_token}"}
                 
-                block_data = asyncio.run(fetch_block_data())
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.get(api_url, headers=headers)
+                    response.raise_for_status()
+                    block_data = response.json()
                 
                 # Store title
                 title = block_data.get("title", "")
@@ -206,7 +262,7 @@ class DotCanvas(QWidget):
                     QTimer.singleShot(0, self.update)
             except Exception as e:
                 # On error, store None to indicate failed load
-                print(f"Error loading image for block {block_id}: {e}", file=sys.stderr)
+                # print(f"Error loading image for block {block_id}: {e}", file=sys.stderr)
                 self.block_images[block_id] = None
         
         # Run in background thread
@@ -632,11 +688,11 @@ class ArenaSearchGUI(QMainWindow):
         # Start logo spinning animation
         self.canvas.start_spinning()
         
-        # Start search
+        # Start search (match CLI default of top-k=5 unless we add UI to change it)
         self.worker = SearchWorker(
             vector_store=self.vector_store,
             file_path=file_path,
-            k=10  # Search for more results to allow deduplication
+            k=5
         )
         self.worker.finished.connect(self.on_search_finished)
         self.worker.error.connect(self.on_search_error)
@@ -644,22 +700,43 @@ class ArenaSearchGUI(QMainWindow):
     
     def on_search_finished(self, results: list):
         """Handle search completion."""
-        print(f"\nReceived {len(results)} search results:")
+        # Stop spinning immediately
+        self.canvas.stop_spinning()
+        
+        print(f"\nReceived {len(results)} ranked documents:")
         print("-" * 70)
-        for i, result in enumerate(results):
-            document = result.document
-            score = result.score
-            source = document.metadata.get("source", "Unknown")
-            filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-            content_preview = document.content[:80].replace('\n', ' ').replace('\r', ' ')
-            print(f"{i+1}. Score: {score:.4f} | File: {filename}")
-            print(f"   Source: {source}")
-            print(f"   Content preview: {content_preview}...")
-        print("-" * 70)
-        print(f"Note: Lower scores = better matches (distance-based scoring)\n")
+        
+        # Pass results directly to canvas (logic offloaded to search_pdf_chunks)
+        dots = []
+        
+        for i, item in enumerate(results):
+            if isinstance(item, dict):
+                filename = item.get('filename', 'Unknown')
+                weighted_score = item.get('weighted_score', 0)
+                
+                # Extract block ID from filename if present
+                block_id = None
+                url = "Unknown"
+                if filename != "Unknown" and "_" in filename:
+                    parts = filename.split("_")
+                    if parts[0].isdigit():
+                        block_id = parts[0]
+                        url = f"https://are.na/block/{block_id}"
+                
+                # Calculate angle for visualization (purely visual)
+                import math
+                angle = (i * 137.5) * (math.pi / 180)  # Golden angle
+                
+                dots.append((weighted_score, url, filename, angle, block_id))
+                
+                if i < 5:
+                    print(f"{i+1}. File: {filename} (Score: {weighted_score:.4f})")
+            
+            else:
+                # Fallback for legacy results (shouldn't be hit for PDF search)
+                pass
 
-        # Queue results to be displayed after completing a full rotation
-        self.canvas.set_pending_results(results)
+        self.canvas.set_dots(dots)
     
     def on_search_error(self, error: str):
         """Handle search error."""

@@ -39,6 +39,7 @@ async def extract_text_from_pdf(pdf_path: str) -> str:
 
 async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 20) -> list:
     pdf_text = await extract_text_from_pdf(pdf_path)
+    print(f"Debug: Extracted {len(pdf_text)} chars from PDF: {pdf_path}")
     if not pdf_text or len(pdf_text.strip()) < 10:
         return []
     pdf_document = Document(content=pdf_text, metadata={"source": pdf_path, "type": "pdf"})
@@ -46,25 +47,67 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 2
         name="langchain:RecursiveCharacterTextSplitter", chunk_size=1000, chunk_overlap=200
     )
     pdf_chunks = await text_splitter.split_documents([pdf_document])
+    
     all_results = []
+    # Track which PDF chunk produced each result
     for pdf_chunk in pdf_chunks:
-        results = await vector_store.search(query=pdf_chunk.content, k=k)
-        all_results.extend(results)
+        # Ensure we get the actual content - handle both BeeAI and LangChain Document formats
+        chunk_content = pdf_chunk.content if hasattr(pdf_chunk, 'content') else getattr(pdf_chunk, 'page_content', str(pdf_chunk))
+        results = await vector_store.search(query=chunk_content, k=k)
+        # Store result with its matching PDF chunk (store the content, not the object)
+        for result in results:
+            all_results.append((result, chunk_content))
+    
     if not all_results:
         return []
 
-    seen_docs = set() #for deduplication
-    unique_results = []
-    for result in sorted(all_results, key=lambda x: x.score):
-        # Use document content as key to avoid duplicates
-        doc_key = result.document.content[:100]  # First 100 chars as key
-        if doc_key not in seen_docs:
-            seen_docs.add(doc_key)
-            unique_results.append(result)
-            if len(unique_results) >= 60:  # Return more for block_id deduplication
-                break
+    # Group by filename and calculate scores
+    import math
+    doc_groups = {}
     
-    return unique_results
+    for result, pdf_chunk_content in all_results:
+        source = result.document.metadata.get("source", "Unknown")
+        filename = os.path.basename(source) if source != "Unknown" else "Unknown"
+        
+        if filename not in doc_groups:
+            doc_groups[filename] = {
+                "matches": [],
+                "total_score": 0,
+                "source": source
+            }
+        
+        # Add match if not duplicate (based on content snippet)
+        content_snippet = result.document.content[:100]
+        is_duplicate = any(m[0].document.content[:100] == content_snippet for m in doc_groups[filename]["matches"])
+        
+        if not is_duplicate:
+            doc_groups[filename]["matches"].append((result, pdf_chunk_content))
+            doc_groups[filename]["total_score"] += result.score
+
+    # Calculate final weighted scores
+    ranked_docs = []
+    for filename, data in doc_groups.items():
+        match_count = len(data["matches"])
+        if match_count == 0:
+            continue
+            
+        avg_score = data["total_score"] / match_count
+        
+        weighted_score = avg_score * (1 + math.log10(match_count))
+        
+        ranked_docs.append({
+            "filename": filename,
+            "source": data["source"],
+            "weighted_score": weighted_score,
+            "avg_score": avg_score,
+            "match_count": match_count,
+            "matches": sorted(data["matches"], key=lambda x: x[0].score, reverse=True) # Top matches first
+        })
+
+    ranked_docs.sort(key=lambda x: x["weighted_score"], reverse=True)
+    
+    # Return top 20 results only
+    return ranked_docs[:20]
 
 
 async def search(vector_store: VectorStore, query: str, k: int = 5) -> None:
@@ -83,7 +126,6 @@ async def search(vector_store: VectorStore, query: str, k: int = 5) -> None:
             source = document.metadata.get("source", "Unknown")
             filename = os.path.basename(source) if source != "Unknown" else "Unknown"
             
-            # Get content preview (first 300 chars)
             content = document.content
             content_preview = content[:300] + "..." if len(content) > 300 else content
 
@@ -92,7 +134,6 @@ async def search(vector_store: VectorStore, query: str, k: int = 5) -> None:
             if source != "Unknown":
                 print(f"   Path: {source}")
             print(f"   Content:")
-            # Indent content for readability
             for line in content_preview.split("\n"):
                 print(f"   {line}")
             print()
@@ -146,31 +187,31 @@ async def main() -> None:
         if not os.path.exists(args.pdf):
             print(f"Error: PDF file not found: {args.pdf}", file=sys.stderr)
             sys.exit(1)
-        print(f"\nProcessing file: {args.pdf}")
-        print("=" * 70)
         results = await search_pdf_chunks(vector_store, args.pdf, k=args.top_k)
         
+        # Grouped display
         if not results:
             print("No similar chunks found.")
         else:
-            print(f"TOP {len(results)} MOST SIMILAR CHUNKS")
+            print(f"TOP MATCHING DOCUMENTS (Weighted Score)")
             print("=" * 70)
-            print()
             
-            for i, result in enumerate(results, 1):
-                document = result.document
-                score = result.score
-                source = document.metadata.get("source", "Unknown")
-                filename = os.path.basename(source) if source != "Unknown" else "Unknown"
-                content_preview = document.content[:300] + "..." if len(document.content) > 300 else document.content
+            for i, doc_data in enumerate(results[:10], 1): # Top 10 documents
+                print(f"\n{i}. FILE: {doc_data['filename']}")
+                print(f"   Weighted Score: {doc_data['weighted_score']:.4f}")
+                print(f"   Matches Found: {doc_data['match_count']}")
+                print(f"   Path: {doc_data['source']}")
+                print("-" * 40)
                 
-                print(f"{i}. Similarity Score: {score:.4f}")
-                print(f"   File: {filename}")
-                if source != "Unknown":
-                    print(f"   Path: {source}")
-                print(f"   Content:")
-                for line in content_preview.split("\n"):
-                    print(f"   {line}")
+                # Show top 3 matching chunks for this document
+                for j, (match, query_chunk) in enumerate(doc_data['matches'][:3], 1):
+                    content = match.document.content
+                    preview = content[:200].replace('\n', ' ') + "..."
+                    query_preview = query_chunk[:100].replace('\n', ' ') + "..."
+                    
+                    print(f"   Match {j} (Score: {match.score:.4f}):")
+                    print(f"     Query: \"{query_preview}\"")
+                    print(f"     Found: \"{preview}\"")
                 print()
     else:
         if not args.query:
