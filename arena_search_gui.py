@@ -3,12 +3,10 @@
 Simple drag-and-drop GUI for searching the arena vector store.
 """
 import asyncio
-import math
 import os
 import sys
 import webbrowser
 from PyQt6.QtCore import QRect, QRectF, Qt, QThread, pyqtSignal, QTimer
-from tools.search.arena.arena import ArenaTool
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget)
 from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QFont, QTextOption
 from arena_search import load_vector_store, search_pdf_chunks
@@ -305,6 +303,23 @@ class DotCanvas(QWidget):
         
         # Draw block images and lines
         for i, (score, url, filename, angle, block_id) in enumerate(self.dots):
+            has_image = False
+            has_title = False
+            pixmap = None
+            title = ""
+
+            if block_id:
+                if block_id in self.block_images:
+                    pixmap = self.block_images[block_id]
+                    has_image = pixmap is not None and not pixmap.isNull()
+                if block_id in self.block_titles:
+                    title = self.block_titles[block_id] or ""
+                    has_title = bool(title.strip())
+
+            # Skip entries that have neither image nor title ready
+            if not has_image and not has_title:
+                continue
+
             # Normalize score to 0-1 range (higher score = more similar = closer to center)
             normalized = (score - min_score) / score_range
             
@@ -326,20 +341,15 @@ class DotCanvas(QWidget):
             painter.drawLine(int(center_x), int(center_y), int(x), int(y))
             
             # Draw block image (50x50px) or title text
-            if block_id and block_id in self.block_images:
-                pixmap = self.block_images[block_id]
-                if pixmap and not pixmap.isNull():
-                    # Draw image centered at position
-                    img_size = 50
-                    img_x = x - img_size / 2
-                    img_y = y - img_size / 2
-                    painter.drawPixmap(int(img_x), int(img_y), pixmap)
-                    continue
+            if has_image and pixmap:
+                img_size = 50
+                img_x = x - img_size / 2
+                img_y = y - img_size / 2
+                painter.drawPixmap(int(img_x), int(img_y), pixmap)
+                continue
             
-            # Fallback: draw title text if available, otherwise dot
-            if block_id and block_id in self.block_titles:
-                title = self.block_titles[block_id]
-                
+            # Fallback: draw title text if available
+            if has_title:
                 # Draw text in a box with word wrapping
                 font = QFont("Arial", 9)
                 painter.setFont(font)
@@ -374,12 +384,7 @@ class DotCanvas(QWidget):
                 # Draw wrapped text
                 painter.setPen(QPen(QColor(0, 0, 0), 1))
                 painter.drawText(text_rect, title, text_option)
-            else:
-                # Fallback: draw dot
-                painter.setPen(QPen(QColor(0, 0, 0), 2))
-                painter.setBrush(QColor(0, 0, 0))
-                dot_size = 8
-                painter.drawEllipse(int(x - dot_size/2), int(y - dot_size/2), dot_size, dot_size)
+            # No need for additional fallback since entries without content are skipped
         
         # Draw logo at center (after dots so it's on top)
         if self.logo and not self.logo.isNull():
@@ -519,6 +524,10 @@ class DotCanvas(QWidget):
         # Check each dot for hover
         hovered_index = None
         for i, (score, url, filename, angle, block_id) in enumerate(self.dots):
+            has_image = block_id and block_id in self.block_images and self.block_images[block_id] is not None and not self.block_images[block_id].isNull()
+            has_title = block_id and block_id in self.block_titles and bool(self.block_titles[block_id].strip())
+            if not has_image and not has_title:
+                continue
             normalized = (score - min_score) / score_range
             # Invert so higher scores (more similar) are closer to center
             distance_normalized = (1 - normalized) ** 0.5
@@ -584,6 +593,10 @@ class DotCanvas(QWidget):
         
         # Check each dot
         for i, (score, url, filename, angle, block_id) in enumerate(self.dots):
+            has_image = block_id and block_id in self.block_images and self.block_images[block_id] is not None and not self.block_images[block_id].isNull()
+            has_title = block_id and block_id in self.block_titles and bool(self.block_titles[block_id].strip())
+            if not has_image and not has_title:
+                continue
             normalized = (score - min_score) / score_range
             # Invert so higher scores (more similar) are closer to center
             distance_normalized = (1 - normalized) ** 0.5
