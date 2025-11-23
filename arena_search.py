@@ -17,9 +17,20 @@ from beeai_framework.backend.text_splitter import TextSplitter
 from beeai_framework.backend.vector_store import VectorStore
 from beeai_framework.adapters.beeai.backend.vector_store import TemporalVectorStore
 from beeai_framework.backend.types import Document
+from beeai_framework.cache import SlidingCache
 
 
 VECTOR_DB_PATH = "arena_vector_store"
+CHUNK_SEARCH_CACHE = SlidingCache(size=1024, ttl=10 * 60)
+
+async def search_chunk_with_cache(vector_store: VectorStore, chunk_content: str, k: int):
+    cache_key = f"{k}:{hash(chunk_content)}"
+    cached = await CHUNK_SEARCH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    results = await vector_store.search(query=chunk_content, k=k)
+    await CHUNK_SEARCH_CACHE.set(cache_key, results)
+    return results
 
 
 async def load_vector_store() -> VectorStore | None:
@@ -53,7 +64,7 @@ async def search_pdf_chunks(vector_store: VectorStore, pdf_path: str, k: int = 2
     for pdf_chunk in pdf_chunks:
         # Ensure we get the actual content - handle both BeeAI and LangChain Document formats
         chunk_content = pdf_chunk.content if hasattr(pdf_chunk, 'content') else getattr(pdf_chunk, 'page_content', str(pdf_chunk))
-        results = await vector_store.search(query=chunk_content, k=k)
+        results = await search_chunk_with_cache(vector_store, chunk_content, k)
         # Store result with its matching PDF chunk (store the content, not the object)
         for result in results:
             all_results.append((result, chunk_content))
