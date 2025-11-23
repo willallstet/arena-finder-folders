@@ -1,1 +1,0 @@
-Something was always done about something. Now nothing was done, except documentation. For every event, there were multiple documents and artifacts, until there were more documents and artifacts than events. Inevitably someone called a document an event, and people made documents of documents.

@@ -1,1 +1,0 @@
-EASS helpline advises and assists individuals

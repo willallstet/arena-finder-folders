@@ -1,1 +1,0 @@
-Poros, Saronic Islands, Greece

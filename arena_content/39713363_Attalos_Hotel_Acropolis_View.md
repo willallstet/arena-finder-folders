@@ -1,1 +1,0 @@
-Attalos Hotel Acropolis View

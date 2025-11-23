@@ -1,1 +1,0 @@
-phrases from my journal that contain the word love.

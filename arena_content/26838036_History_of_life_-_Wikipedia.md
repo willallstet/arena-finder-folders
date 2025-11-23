@@ -1,4 +1,0 @@
-From Wikipedia, the free encyclopedia
-"History of evolution" redirects here; not to be confused with History of evolutionary thought.
-Retrieved from "https://en.wikipedia.org/w/index.php?title=History_of_life&oldid=1322501620"
-Categories: Evolution-related timelinesPaleontologyEvolutionary biologyEarth sciencesGeochronologyHidden categories: Webarchive template wayback linksCS1 maint: DOI inactive as of July 2025CS1: unfit URLArticles with short descriptionShort description is different from WikidataGood articlesAll articles with unsourced statementsArticles with unsourced statements from April 2021

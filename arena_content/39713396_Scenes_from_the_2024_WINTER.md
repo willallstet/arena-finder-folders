@@ -1,1 +1,0 @@
-Scenes from the 2024 WINTER

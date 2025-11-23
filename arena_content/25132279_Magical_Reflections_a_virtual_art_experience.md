@@ -1,1 +1,0 @@
-We're sorry but 2021-facebook-ang-immersivepainting doesn't work properly without JavaScript enabled. Please enable it to continue.

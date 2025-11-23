@@ -1,1 +1,0 @@
-American Orchid Society

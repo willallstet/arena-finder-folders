@@ -1,1 +1,0 @@
-e-fluxJournalSubscribeJodi’s InfrastructureAlexander R. GallowayIssue #74June 2016‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌© 2016 e-flux and the author‌

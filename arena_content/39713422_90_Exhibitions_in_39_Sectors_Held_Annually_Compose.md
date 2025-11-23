@@ -1,1 +1,0 @@
-90 Exhibitions* in 39 Sectors Held Annually. *Composed of 372 Sub-exhibitions Visit RX Japan"s corporate website.

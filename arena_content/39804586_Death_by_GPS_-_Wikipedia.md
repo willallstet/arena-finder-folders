@@ -1,5 +1,0 @@
-From Wikipedia, the free encyclopedia
-Death of people attributable, in part, to following satellite navigation directions or maps
-Death by GPS refers to the death of people attributable, in part, to following GPS directions or GPS maps.[1][2][3] Death by GPS has been noted in several deaths in Death Valley, California,[4][5] a lost hiker at Joshua Tree National Park in southeastern California,[6] and incidents in Washington State, Australia, England, Italy and Brazil.
-Retrieved from "https://en.wikipedia.org/w/index.php?title=Death_by_GPS&oldid=1318482394"
-Categories: Global Positioning SystemTechnology hazardsTransport accidental deathsHistory of navigationImpact of automation21st century in technologyHidden categories: Articles with short descriptionShort description matches WikidataUse dmy dates from May 2016Articles to be expanded from October 2022All articles to be expanded

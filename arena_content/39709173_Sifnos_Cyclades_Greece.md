@@ -1,1 +1,0 @@
-Sifnos, Cyclades, Greece

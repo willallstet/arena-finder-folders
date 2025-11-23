@@ -1,1 +1,0 @@
-food-drink &amp; innovations logo

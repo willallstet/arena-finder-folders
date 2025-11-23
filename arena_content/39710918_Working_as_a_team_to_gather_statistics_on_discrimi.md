@@ -1,1 +1,0 @@
-Working as a team to gather statistics on discrimination

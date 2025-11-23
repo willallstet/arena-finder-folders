@@ -1,1 +1,0 @@
-Kefalonia, Ionian Islands, Greece

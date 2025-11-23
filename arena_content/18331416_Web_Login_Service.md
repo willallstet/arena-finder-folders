@@ -1,1 +1,0 @@
-If your browser does not continue automatically, click

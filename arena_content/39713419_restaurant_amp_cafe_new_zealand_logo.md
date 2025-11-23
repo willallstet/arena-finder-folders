@@ -1,1 +1,0 @@
-restaurant &amp; cafe new zealand logo

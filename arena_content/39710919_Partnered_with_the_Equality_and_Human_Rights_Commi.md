@@ -1,1 +1,0 @@
-Partnered with the Equality and Human Rights Commission

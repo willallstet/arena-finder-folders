@@ -1,1 +1,0 @@
-Red-tailed Tropicbird -spring- (Kauai, Hawai'i)
